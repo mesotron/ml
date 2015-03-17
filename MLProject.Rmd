@@ -1,0 +1,49 @@
+---
+title: "Machine Learning Course Project"
+author: "Gabriel R."
+date: "Tuesday, March 17, 2015"
+output: html_document
+---
+
+##Cleaning data
+
+I read in the data, omitting all variables that were more than 10% blank or NA. Of the remaining variables, the first 7 had little to do with the readings from the motion sensors, so I omitted these as well.
+```{r}
+set.seed(9001)
+fewblanks <- function(col) { (sum(is.na(col), na.rm=T) + sum(col == "", na.rm=T)) / length(col) < .1 }
+
+readdata <- function(filename) {
+	data <- read.csv(filename, stringsAsFactors=F)
+	data.frame(data[,sapply(data, fewblanks)][,-7:-1])  # keep only the columns with few blanks, then remove first 7
+}
+traind <- readdata("pml-training.csv")
+traind$classe <- as.factor(traind$classe)
+testd <- readdata("pml-testing.csv")
+```
+
+##Building the model
+I then built a random forest model using 2-fold cross-validation. I did this first with only a small subset of the data because training on the entire dataset took a very long time, and likewise used only 2 folds to reduce computation time. I used random forests as the mapping between predictors and outcome variable seems very likely to be nonlinear.
+```{r}
+train.subset <- traind[sample(nrow(traind), 1000),]
+library(caret)
+modFit <- train(classe ~ ., data=train.subset, method="rf", prox=T, tuneLength=1, trControl = trainControl(method = "cv", number=2))
+modFit
+```
+As seen above the expected out-of-sample error with this model is 1 - .857, that is, 14.3%... not amazing, but not bad for a model trained on only 1000 rows. I then ordered the predictors by their importance and threw out all but the 30 most important. The idea was that I'd use only these 30 when training the model on the entire training set, thereby reducing computation time and making the model more parsimonious. I wrote code to do just that:
+
+```{r}
+vi <- data.frame(varImp(modFit)$importance)
+top <- order(-vi$Overall)[1:30]
+trainImp <- traind[,c(top, ncol(traind))]
+modFit2 <- train(classe ~ ., data=trainImp, method="rf", prox=T, tuneLength=1, trControl = trainControl(method = "cv", number=2))
+modFit2
+```
+
+Once again trainControl(method = "cv", number=2) was used to do two-fold cross-validation. Increasing the number of folds would likely have increased accuracy, but even as is I get accuracy of .989, yielding expected out-of-sample error of .011 (1.1%). This is quite good, so I reduced the columns in the test set in the same way as on the training set, and computed predictions on the test set, as follows:
+
+```{r}
+testImp <- testd[,c(top)]
+predictions <- predict(modFit2, newdata=testImp)
+```
+
+On submission, all predictions were correct, demonstrating that the true out-of-sample error was indeed quite low.
